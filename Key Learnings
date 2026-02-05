@@ -1,0 +1,63 @@
+
+How to run from device and access the app storage
+
+Use Xcode’s Devices and Simulators
+- Connect your device.
+- In Xcode, go to Window → Devices and Simulators → Devices tab.
+- Select your device, and under Installed Apps, find your app.
+- Click the gear icon → Download Container…
+- This will download your app’s sandbox container as a .xcappdata file to your Mac.
+- Right-click the .xcappdata → Show Package Contents.
+- Inside, you’ll see Library/Application Support/ and all the files your app has stored, including default.store or any cached images.
+
+Observed the following when selected Show Package Contents
+
+AppData/Library/Caches/ - Under this folder there was a file `Cache.db` which when opened via DBBrowser for SQLite displayed the image url and timestamp
+
+However to view the image itself I had to append either ".jpg" or ".png" to the files inside and open with preview.
+
+
+Cache.db → usually a SQLite database that stores metadata about cached items (URL, file size, timestamps, etc.)
+
+fsCachedData/UUID… files → actual image data, but often without extensions and sometimes in raw or encoded format (e.g., WebP, PNG data, or even proprietary serialized format). That’s why double-clicking doesn’t open them in Preview
+
+
+Why we see Cache.db and fsCachedData ❓
+
+Cache.db + fsCachedData is likely part of iOS’s internal caching system (like URLCache or NSURLCache).
+Even if your code writes images manually to FileManager, if you are using URLSession or AsyncImage internally, iOS automatically caches responses in fsCachedData and keeps a SQLite index (Cache.db).
+
+
+--------- Cache Configuration ------------
+ `CacheConfiguration` was made a class instead of struct because we wanted to have the same object reference.
+  Framework provides a default configuration and applications can override with the configuration of their preferred chocice.
+
+-------------- configureCache method ----------------
+
+The following method can override the default configuration settings. Updating the properties since the goal is to keep the same cacheConfiguration instance and only mutate its properties. The same reason why it CacheConfiguration was made a Class instead of struct
+`
+public func configureCache(config: CacheConfiguration) {
+        self.cacheConfiguration.maxDiskStorageLimit = config.maxDiskStorageLimit
+        self.cacheConfiguration.maxImageSize = config.maxDiskStorageLimit
+        self.cacheConfiguration.supportedImageFormats = config.supportedImageFormats
+}
+    `
+    
+    --------------- Chain of Responsibility Design pattern ---------------
+    
+    protocol ManagingCachePrerequisite {
+        var handler: CacheValidating { get  }
+        func isCachePrerequisiteMet(image: Data?) -> Bool
+    }
+    
+    We have implemented the above protocol to co-ordinate and ensure that the image meets the criteria to be saved or handle via cache. In the following initialiser we have defined the order in which validation has to be performed
+    
+        init(cacheConfiguration: CacheConfiguration) {
+            let cacheValidator = CacheValidator()
+            let imageValidator = ImageValidator()
+            cacheValidator.next = imageValidator
+            self.handler = cacheValidator
+            self.cacheConfiguration = cacheConfiguration
+        }
+        
+    Each validator rerforms one specific check or passes the request to the next validator or stops the chain and returns false
